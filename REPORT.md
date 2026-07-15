@@ -36,7 +36,10 @@
    - [1.1 Topologie de Réseau Virtuelle et Segmentation](#11-topologie-de-réseau-virtuelle-et-segmentation)
    - [1.2 Isolation de l'Espace Hôte (CachyOS)](#12-isolation-de-lespace-hôte-cachyos)
    - [1.3 Méthodologie de Validation du Réseau](#13-méthodologie-de-validation-du-réseau)
-2. Phase 2 : Serveur Web de l'Application (Caddy & PHP-FPM) *(À venir)*
+2. [Phase 2 : Couche Applicative et Optimisation Inter-Conteneur (Phase 2)](#2-couche-applicative-et-optimisation-inter-conteneur-phase-2)
+   - [2.1 Communication Haute Performance via Socket de Domaine UNIX (UDS)](#21-communication-haute-performance-via-socket-de-domaine-unix-uds)
+   - [2.2 Implémentation Technique et Fichiers de Configuration](#22-implémentation-technique-et-fichiers-de-configuration)
+   - [2.3 Méthodologie de Validation de la Couche Web](#23-méthodologie-de-validation-de-la-couche-web)
 3. Phase 3 : Répartition de Charge Ingress (HAProxy) *(À venir)*
 
 ---
