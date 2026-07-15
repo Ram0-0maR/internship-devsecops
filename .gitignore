@@ -1,0 +1,31 @@
+# Core Local System Files
+.DS_Store
+Thumbs.db
+*.log
+
+# Laravel/PHP runtime files to exclude
+server1-web/laravel/.env
+server1-web/laravel/vendor/
+server1-web/laravel/storage/*.key
+server1-web/laravel/bootstrap/cache/*
+
+# Sockets (Critical: We do not commit UNIX sockets)
+*.sock
+server1-web/php-fpm/sockets/*
+
+# Local Persistent Databases & Cache (Prevents multi-gigabyte commits)
+server4-db/postgres-data/*
+server3-cache/redis-data/*
+server2-storage/minio-data/*
+security-ips/cassandra-data/*
+security-ips/logs/*
+
+# Certs & Private Keys
+server0-ingress/certs/*.pem
+server0-ingress/certs/*.key
+server1-web/caddy/data/*
+server1-web/caddy/config/*
+
+# Prevent keeping env files
+.env
+*.env
