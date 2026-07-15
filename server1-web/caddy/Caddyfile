@@ -1,0 +1,19 @@
+:80 {
+    root * /var/www/laravel/public
+    file_server
+
+    # Direct dynamic PHP scripts to our Shared UNIX Socket
+    php_fastcgi unix//var/run/php-fpm/php-fpm.sock {
+        # Failover handling and modern routing
+        resolve_root_symlink
+    }
+
+    # Custom Logging for Security Monitoring (will feed into Cassandra later)
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+        format json
+    }
+}

@@ -1,0 +1,50 @@
+services:
+  php-fpm:
+    image: php:8.2-fpm-alpine
+    container_name: php-fpm-srv1
+    restart: unless-stopped
+    volumes:
+      # Mount our application code
+      - ./laravel:/var/www/laravel
+      # Override the default php-fpm config
+      - ./php-fpm/zzz-custom.conf:/usr/local/etc/php-fpm.d/zzz-custom.conf:ro
+      # Mount the shared socket volume
+      - socket-volume:/var/run/php-fpm
+    networks:
+      - app-net
+      - db-net
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy-srv1
+    restart: unless-stopped
+    ports:
+      - "8080:80" # Exposed temporarily on host for Phase 2 validation
+    volumes:
+      # Mount our application code (Caddy needs access to read public/ static files)
+      - ./laravel:/var/www/laravel
+      # Mount Caddy configuration
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Mount the shared socket volume
+      - socket-volume:/var/run/php-fpm
+      # Mount local paths for logs and persistent data
+      - ./caddy/data:/data
+      - ./caddy/config:/config
+      - ../security-ips/logs:/var/log/caddy
+    networks:
+      - dmz-net
+      - app-net
+    depends_on:
+      - php-fpm
+
+volumes:
+  # This shared in-memory volume will hold the Unix Domain Socket file (.sock)
+  socket-volume:
+
+networks:
+  dmz-net:
+    external: true
+  app-net:
+    external: true
+  db-net:
+    external: true

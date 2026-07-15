@@ -21,10 +21,10 @@
 
 ## Informations Générales
 
-- **Réalisé par :** Omar Elqouas
-- **Encadrant Pédagogique :** [Nom de ton encadrant]
+- **Réalisé par :** Omar ELQAOUAS
+- **Encadrant :** Zouhair ELHICHAMI
 - **Date de Soumission :** Juillet 2026
-- **Version du Document :** v1.0.0
+- **Version du Document :** v2.0.0
 
 ---
 
@@ -142,3 +142,159 @@ NETWORK ID     NAME      DRIVER    SCOPE
 ```
 
 La réussite de ces étapes confirme l'étanchéité de notre sandbox. L'espace de travail est désormais prêt pour la phase suivante : la configuration du serveur d'application Web (**Caddy** et **PHP-FPM**).
+
+---
+
+<div style="page-break-after: always;"></div>
+
+# 2. Couche Applicative et Optimisation Inter-Conteneur (Phase 2)
+
+## 2.1 Communication Haute Performance via Socket de Domaine UNIX (UDS)
+
+L'architecture traditionnelle impliquant un serveur Web (**Caddy**) et un interpréteur PHP (**PHP-FPM**) s'appuie généralement sur des connexions TCP bouclées sur l'interface de loopback (`127.0.0.1:9000`). Bien que simple à mettre en œuvre, cette approche introduit une latence induite par l'empilement des couches de protocoles réseau (encapsulation/désencapsulation des paquets, poignées de main TCP et allocation de buffers de sockets système).
+
+Pour éliminer ce goulot d'étranglement au sein du nœud **Server 1**, la liaison entre le serveur de fichiers **Caddy** et l'interpréteur **PHP-FPM** a été configurée via un **Socket de Domaine UNIX (UDS)** persistant partagé.
+
+- **Mécanisme d'échange :** Les requêtes HTTP reçues par Caddy sont transmises à PHP-FPM directement sous forme de flux **FastCGI** à travers un fichier socket virtuel (`php-fpm.sock`) monté en mémoire.
+- **Sécurité & Permissions :** L'accès au socket `/run/php-fpm/php-fpm.sock` est sécurisé via des permissions POSIX strictes (`0660`), restreignant l'accès uniquement aux processus appartenant au groupe système `www-data`.
+- **Gain de Performance :** Ce mode opératoire permet un transfert de données directement en mémoire noyau, évitant la surcharge de la pile réseau TCP/IP locale et réduisant significativement la latence des requêtes dynamiques.
+
+---
+
+## 2.2 Implémentation Technique et Fichiers de Configuration
+
+Pour matérialiser cette isolation et cette communication par socket, l'architecture s'appuie sur trois configurations clés au sein du répertoire :
+
+```text
+~/internship-devsecops/server1-web/
+```
+
+### A. Configuration du Serveur Web (`caddy/Caddyfile`)
+
+Le serveur **Caddy** est configuré pour écouter sur le port HTTP (80) et rediriger toutes les requêtes PHP vers le socket UNIX partagé.
+
+```caddy
+:80 {
+    root * /var/www/html/public
+    file_server
+
+    # Redirection FastCGI vers le socket UNIX partagé de PHP-FPM
+    php_fastcgi unix//run/php-fpm/php-fpm.sock {
+        resolve_root_symlink
+    }
+
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+        format json
+    }
+}
+```
+
+### B. Configuration de la Liaison Docker (`docker-compose.yml`)
+
+Le fichier d'orchestration déclare un volume nommé `socket-volume`, monté de manière bidirectionnelle afin que les deux conteneurs puissent partager le fichier socket.
+
+```yaml
+version: '3.8'
+
+networks:
+  dmz-net:
+    external: true
+  app-net:
+    external: true
+
+volumes:
+  socket-volume:
+  caddy-data:
+  caddy-config:
+
+services:
+  php-fpm:
+    image: php:8.2-fpm-alpine
+    container_name: php-fpm-app
+    volumes:
+      - ../laravel:/var/www/html
+      - socket-volume:/run/php-fpm
+    networks:
+      - app-net
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy-web
+    ports:
+      - "80:80"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile
+      - ../laravel:/var/www/html
+      - socket-volume:/run/php-fpm
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - dmz-net
+      - app-net
+    depends_on:
+      - php-fpm
+    restart: unless-stopped
+```
+
+---
+
+## 2.3 Méthodologie de Validation de la Couche Web
+
+Une fois les conteneurs démarrés à l'aide de la commande suivante :
+
+```bash
+docker compose up -d
+```
+
+la validation du bon fonctionnement de la liaison par socket et de l'interpréteur PHP a été réalisée.
+
+### 1. Vérification de la création du fichier socket
+
+La présence du fichier socket dans le volume partagé a été confirmée en inspectant le système de fichiers du conteneur **Caddy**.
+
+```bash
+docker exec -it caddy-web ls -la /run/php-fpm/
+```
+
+**Résultat attendu :**
+
+```text
+srw-rw---- 1 82 82 0 Jul 15 19:00 php-fpm.sock
+```
+
+> Le préfixe `s` confirme qu'il s'agit d'un **Socket de Domaine UNIX (UNIX Domain Socket)**.
+
+---
+
+### 2. Test fonctionnel d'exécution PHP
+
+Une requête HTTP de validation est envoyée au serveur **Caddy** afin de vérifier que **PHP-FPM** traite correctement les scripts PHP via FastCGI.
+
+```bash
+curl -i http://localhost/index.php
+```
+
+**Résultat attendu :**
+
+```json
+HTTP/1.1 200 OK
+Content-Type: application/json
+Server: Caddy
+
+{
+  "status": "success",
+  "message": "Welcome to the High-Availability Platform",
+  "layer": "Server 1 (Application Layer)",
+  "php_version": "8.2.x",
+  "interface": "fpm-fcgi"
+}
+```
+
+La réussite de ces validations confirme que la communication entre **Caddy** et **PHP-FPM** via un **Socket de Domaine UNIX** est pleinement opérationnelle. Cette architecture offre une exécution performante des requêtes PHP tout en réduisant la surface d'attaque liée aux communications réseau internes. Le serveur d'application est désormais prêt à recevoir le trafic provenant du répartiteur de charge (**HAProxy**) dans les phases suivantes du projet.
+
+---
