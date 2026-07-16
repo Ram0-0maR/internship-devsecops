@@ -18,8 +18,6 @@ services:
     image: caddy:2-alpine
     container_name: caddy-srv1
     restart: unless-stopped
-    ports:
-      - "8080:80" # Exposed temporarily on host for Phase 2 validation
     volumes:
       # Mount our application code (Caddy needs access to read public/ static files)
       - ./laravel:/var/www/laravel

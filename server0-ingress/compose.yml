@@ -1,0 +1,21 @@
+services:
+  haproxy:
+    image: haproxy:2.8-alpine
+    container_name: haproxy-edge
+    restart: unless-stopped
+    # Explicitly instruct HAProxy to boot with the config file and in foreground master-worker mode
+    command: ["haproxy", "-W", "-db", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Map our configuration file
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      # Map the combined SSL Certificate
+      - ./certs/haproxy.pem:/usr/local/etc/haproxy/certs/haproxy.pem:ro
+    networks:
+      - dmz-net
+
+networks:
+  dmz-net:
+    external: true
