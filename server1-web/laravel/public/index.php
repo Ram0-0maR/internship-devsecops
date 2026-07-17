@@ -6,6 +6,7 @@ $allowedPages = [
     'home',
     'map',
     'harbor',
+    'ghost-ship',
 ];
 
 if (!in_array($page, $allowedPages)) {

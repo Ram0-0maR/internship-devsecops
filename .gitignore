@@ -29,3 +29,6 @@ server1-web/caddy/config/*
 # Prevent keeping env files
 .env
 *.env
+
+# Deployed challenge artifacts
+server1-web/laravel/public/ghost-ship/
