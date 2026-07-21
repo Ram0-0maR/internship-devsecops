@@ -1,0 +1,48 @@
+version: '3.8'
+
+networks:
+  app-net:
+    external: true
+  db-net:
+    external: true
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+
+services:
+  # Server 4: Transactional Database Tier
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres-db
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - db-net
+
+  # Server 3: Transient Cache Tier (Bridges App & DB zones)
+  redis:
+    image: redis:7-alpine
+    container_name: redis-cache
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel notice --requirepass "SecureRedisPassword2026!"
+    volumes:
+      - redis_data:/data
+    networks:
+      - app-net
+      - db-net
+
+  # Server 2: S3 Object Storage Tier
+  minio:
+    image: minio/minio:RELEASE.2024-01-16T16-07-38Z
+    container_name: minio-s3
+    restart: unless-stopped
+    env_file: .env
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - app-net

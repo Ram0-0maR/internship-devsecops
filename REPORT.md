@@ -30,13 +30,14 @@
 
 <div style="page-break-after: always;"></div>
 
+
 # Table des Matières
 
 1. [Phase 1 : Architecture Réseau et Environnement de Travail Isolés](#1-architecture-réseau-et-environnement-de-travail-isolés)
    - [1.1 Topologie de Réseau Virtuelle et Segmentation](#11-topologie-de-réseau-virtuelle-et-segmentation)
    - [1.2 Isolation de l'Espace Hôte (CachyOS)](#12-isolation-de-lespace-hôte-cachyos)
    - [1.3 Méthodologie de Validation du Réseau](#13-méthodologie-de-validation-du-réseau)
-2. [Phase 2 : Couche Applicative et Optimisation Inter-Conteneur (Phase 2)](#2-couche-applicative-et-optimisation-inter-conteneur-phase-2)
+2. [Phase 2 : Couche Applicative et Optimisation Inter-Conteneur](#2-couche-applicative-et-optimisation-inter-conteneur-phase-2)
    - [2.1 Communication Haute Performance via Socket de Domaine UNIX (UDS)](#21-communication-haute-performance-via-socket-de-domaine-unix-uds)
    - [2.2 Implémentation Technique et Fichiers de Configuration](#22-implémentation-technique-et-fichiers-de-configuration)
    - [2.3 Méthodologie de Validation de la Couche Web](#23-méthodologie-de-validation-de-la-couche-web)
@@ -45,7 +46,12 @@
    - [3.2 Préservation de l'Identité Client (Header Injection)](#32-préservation-de-lidentité-client-header-injection)
    - [3.3 Implémentation Technique et Configurations de l'Ingress](#33-implémentation-technique-et-configurations-de-lingress)
    - [3.4 Méthodologie de Validation de l'Ingress et de la Sécurité](#34-méthodologie-de-validation-de-lingress-et-de-la-sécurité)
+4. [Phase 4 : Couche de Données Orientée Persistance et Cache Privé](#4-couche-de-données-orientée-persistance-et-cache-privé-phase-4)
+   - [4.1 Architecture et Segmentation Réseau de la Couche de Données](#41-architecture-et-segmentation-réseau-de-la-couche-de-données)
+   - [4.2 Déploiement Déclaratif (`backend-data/docker-compose.yml`)](#42-déploiement-déclaratif-backend-datadocker-composeyml)
+   - [4.3 Validation de l'Isolation du Subnet (`db-net`)](#43-validation-de-lisolation-du-subnet-db-net)
 
+   
 ---
 
 <div style="page-break-after: always;"></div>
@@ -479,5 +485,107 @@ x-content-type-options: nosniff
 ```
 
 La réussite de ces validations confirme que **HAProxy** assure correctement la terminaison TLS, applique les politiques de sécurité HTTP, préserve l'identité du client via les en-têtes normalisés et achemine les requêtes vers le serveur **Caddy**. La plateforme est ainsi accessible de manière sécurisée en **HTTPS**, tout en masquant entièrement l'architecture interne et en préparant l'infrastructure aux phases suivantes de haute disponibilité.
+
+---
+
+<div style="page-break-after: always;"></div>
+
+# 4. Couche de Données Orientée Persistance et Cache Privé (Phase 4)
+
+## 4.1 Architecture et Segmentation Réseau de la Couche de Données
+
+Afin de respecter le principe de **Séparation des Responsabilités (*Separation of Concerns*)** et de prévenir toute exfiltration directe de données, la couche de données est répartie sur trois services conteneurisés, chacun étant déployé dans un segment réseau dédié.
+
+1. **PostgreSQL (Server 4)**  
+   Base de données relationnelle déployée sur le réseau isolé `db-net`. Grâce au réseau Docker marqué `--internal`, aucune communication directe avec le réseau externe (WAN) n'est autorisée.
+
+2. **Redis (Server 3)**  
+   Base de données en mémoire servant de moteur de cache et de gestion des sessions applicatives. Redis est connecté simultanément aux réseaux `app-net` et `db-net`, assurant le relais sécurisé entre la couche applicative et la couche de données.
+
+3. **MinIO (Server 2)**  
+   Serveur de stockage d'objets compatible avec l'API **Amazon S3**, déployé exclusivement sur le réseau `app-net` afin de communiquer uniquement avec le serveur applicatif.
+
+---
+
+## 4.2 Déploiement Déclaratif (`backend-data/docker-compose.yml`)
+
+```yaml
+version: '3.8'
+
+networks:
+  app-net:
+    external: true
+  db-net:
+    external: true
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres-db
+    restart: unless-stopped
+
+    env_file: .env
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    networks:
+      - db-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis-cache
+    restart: unless-stopped
+
+    command: redis-server --save 60 1 --loglevel notice --requirepass "SecureRedisPassword2026!"
+
+    volumes:
+      - redis_data:/data
+
+    networks:
+      - app-net
+      - db-net
+
+  minio:
+    image: minio/minio:RELEASE.2024-01-16T16-07-38Z
+    container_name: minio-s3
+    restart: unless-stopped
+
+    env_file: .env
+
+    command: server /data --console-address ":9001"
+
+    volumes:
+      - minio_data:/data
+
+    networks:
+      - app-net
+```
+
+---
+
+## 4.3 Validation de l'Isolation du Réseau `db-net`
+
+La validation du cloisonnement du réseau **`db-net`** a été réalisée en simulant une tentative de communication ICMP vers une adresse publique (`8.8.8.8`) depuis le conteneur **PostgreSQL**.
+
+```bash
+docker exec -it postgres-db ping -c 2 8.8.8.8
+```
+
+**Résultat attendu :**
+
+```text
+PING 8.8.8.8 (8.8.8.8): 56 data bytes
+ping: sendto: Network unreachable
+```
+
+L'échec de cette communication confirme que le conteneur **PostgreSQL** est totalement isolé du réseau Internet grâce au réseau Docker interne (`db-net`). Cette isolation empêche toute communication sortante non autorisée et réduit considérablement les risques d'exfiltration de données ou de compromission directe de la base de données.
+
+Cette validation confirme que la couche de persistance respecte les exigences de sécurité de l'architecture, où seuls les services autorisés peuvent accéder aux données via les réseaux privés dédiés.
 
 ---
