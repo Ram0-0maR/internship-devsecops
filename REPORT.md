@@ -589,3 +589,63 @@ L'échec de cette communication confirme que le conteneur **PostgreSQL** est tot
 Cette validation confirme que la couche de persistance respecte les exigences de sécurité de l'architecture, où seuls les services autorisés peuvent accéder aux données via les réseaux privés dédiés.
 
 ---
+
+<div style="page-break-after: always;"></div>
+
+# 5. Système de Détection et Prévention d'Intrusion Adaptatif (IPS Phase 5)
+
+## 5.1 Architecture de Télémesure et Stockage NoSQL (Cassandra)
+
+Afin de traiter le volume élevé de journaux d'accès générés par le proxy inverse **HAProxy** et le serveur Web **Caddy**, une base de données orientée colonnes **Apache Cassandra** (**Server 5**) a été intégrée. Son modèle d'écriture hautement performant permet de centraliser la télémesure de sécurité et de calculer dynamiquement les scores de menace attribués aux adresses IP distantes.
+
+Le schéma de données `ips_security` repose sur deux tables complémentaires[cite: 1] :
+
+- **`ip_threat_scores`** : Conserve l'état courant, le score cumulé et le statut de bannissement (`banned=true/false`) par adresse IP source[cite: 1].
+- **`attack_logs`** : Journalise l'ensemble des tentatives malveillantes (Injections SQL, Traversées de répertoires, XSS) sous forme de flux temporel immuable[cite: 1].
+
+---
+
+## 5.2 Schéma de Base de Données CQL (`ips_security`)
+
+```sql
+CREATE KEYSPACE IF NOT EXISTS ips_security
+WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
+
+USE ips_security;
+
+CREATE TABLE IF NOT EXISTS ip_threat_scores (
+    source_ip text PRIMARY KEY,
+    threat_score int,
+    banned boolean,
+    last_attack_type text,
+    updated_at timestamp
+);
+
+CREATE TABLE IF NOT EXISTS attack_logs (
+    event_id uuid,
+    source_ip text,
+    attack_type text,
+    uri_path text,
+    user_agent text,
+    timestamp timestamp,
+    PRIMARY KEY (source_ip, timestamp, event_id)
+) WITH CLUSTERING ORDER BY (timestamp DESC, event_id ASC);
+```
+
+---
+
+## 5.3 Moteur d'Enforcement Noyau (nftables)
+
+Lorsque le score de menace d'une adresse IP franchit le seuil critique (ex: `threat_score >= 30`), le démon IPS interagit directement avec la pile réseau du système hôte **CachyOS** au niveau noyau à l'aide de l'outil **nftables**[cite: 1].
+
+```bash
+# Configuration de la table et du jeu d'adresses bloquées
+sudo nft add table inet ips_filter
+sudo nft add chain inet ips_filter input { type filter hook input priority filter \; policy accept \; }
+sudo nft add set inet ips_filter banned_ips { type ipv4_addr \; }
+sudo nft add rule inet ips_filter input ip saddr @banned_ips drop
+```
+
+Cette approche garantit un rejet des paquets malveillants (**DROP**) dès leur entrée sur l'interface réseau, libérant la couche applicative et les conteneurs Docker du traitement de trafic hostile[cite: 1].
+
+---
