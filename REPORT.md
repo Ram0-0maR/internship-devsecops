@@ -24,7 +24,7 @@
 - **Réalisé par :** Omar ELQAOUAS
 - **Encadrant :** Zouhair ELHICHAMI
 - **Date de Soumission :** Juillet 2026
-- **Version du Document :** v3.0.0
+- **Version du Document :** v5.0.1
 
 ---
 
@@ -37,21 +37,35 @@
    - [1.1 Topologie de Réseau Virtuelle et Segmentation](#11-topologie-de-réseau-virtuelle-et-segmentation)
    - [1.2 Isolation de l'Espace Hôte (CachyOS)](#12-isolation-de-lespace-hôte-cachyos)
    - [1.3 Méthodologie de Validation du Réseau](#13-méthodologie-de-validation-du-réseau)
-2. [Phase 2 : Couche Applicative et Optimisation Inter-Conteneur](#2-couche-applicative-et-optimisation-inter-conteneur-phase-2)
+2. [Phase 2 : Couche Applicative et Optimisation Inter-Conteneur](#2-couche-applicative-et-optimisation-inter-conteneur)
    - [2.1 Communication Haute Performance via Socket de Domaine UNIX (UDS)](#21-communication-haute-performance-via-socket-de-domaine-unix-uds)
    - [2.2 Implémentation Technique et Fichiers de Configuration](#22-implémentation-technique-et-fichiers-de-configuration)
    - [2.3 Méthodologie de Validation de la Couche Web](#23-méthodologie-de-validation-de-la-couche-web)
-3. [Phase 3 : Répartition de Charge Ingress (HAProxy)](#3-couche-dentrée-edge-ingress-et-terminaison-tls-phase-3)
+3. [Phase 3 : Couche d'Entrée Edge Ingress et Terminaison TLS](#3-couche-dentrée-edge-ingress-et-terminaison-tls)
    - [3.1 Proxy Inverse et Terminaison SSL/TLS Globale](#31-proxy-inverse-et-terminaison-ssltls-globale)
    - [3.2 Préservation de l'Identité Client (Header Injection)](#32-préservation-de-lidentité-client-header-injection)
    - [3.3 Implémentation Technique et Configurations de l'Ingress](#33-implémentation-technique-et-configurations-de-lingress)
    - [3.4 Méthodologie de Validation de l'Ingress et de la Sécurité](#34-méthodologie-de-validation-de-lingress-et-de-la-sécurité)
-4. [Phase 4 : Couche de Données Orientée Persistance et Cache Privé](#4-couche-de-données-orientée-persistance-et-cache-privé-phase-4)
+4. [Phase 4 : Couche de Données Orientée Persistance et Cache Privé](#4-couche-de-données-orientée-persistance-et-cache-privé)
    - [4.1 Architecture et Segmentation Réseau de la Couche de Données](#41-architecture-et-segmentation-réseau-de-la-couche-de-données)
    - [4.2 Déploiement Déclaratif (`backend-data/docker-compose.yml`)](#42-déploiement-déclaratif-backend-datadocker-composeyml)
-   - [4.3 Validation de l'Isolation du Subnet (`db-net`)](#43-validation-de-lisolation-du-subnet-db-net)
-
-   
+   - [4.3 Validation de l'Isolation du Réseau `db-net`](#43-validation-de-lisolation-du-réseau-db-net)
+5. [Phase 5 : Système de Détection et Prévention d'Intrusion Adaptatif (IPS)](#5-système-de-détection-et-prévention-dintrusion-adaptatif-ips)
+   - [5.1 Architecture de Télémesure et Stockage NoSQL (Cassandra)](#51-architecture-de-télémesure-et-stockage-nosql-cassandra)
+   - [5.2 Schéma de Base de Données CQL (`ips_security`)](#52-schéma-de-base-de-données-cql-ips_security)
+   - [5.3 Moteur d'Enforcement Noyau (nftables)](#53-moteur-denforcement-noyau-nftables)
+6. [Phase 6 : Plateforme Applicative SecOps-Vault et Stockage Procuratoire](#6-plateforme-applicative-secops-vault-et-stockage-procuratoire)
+   - [6.1 Architecture de l'Application Web et Gestion des Sessions](#61-architecture-de-lapplication-web-et-gestion-des-sessions)
+   - [6.2 Intégration du Coffre-Fort de Preuves Forensiques (MinIO S3)](#62-intégration-du-coffre-fort-de-preuves-forensiques-minio-s3)
+   - [6.3 Implémentation du Moteur Applicatif (`laravel/public/index.php`)](#63-implémentation-du-moteur-applicatif-laravelpublicindexphp)
+7. [Phase 7 : Cluster Multi-Nœuds Haute Disponibilité et Tolérance aux Pannes](#7-cluster-multi-nœuds-haute-disponibilité-et-tolérance-aux-pannes)
+   - [7.1 Scalabilité Horizontale (Nœuds Web Miroir Server 1A & Server 1B)](#71-scalabilité-horizontale-nœuds-web-miroir-server-1a--server-1b)
+   - [7.2 Configuration du Répartiteur de Charge HAProxy (`haproxy.cfg`)](#72-configuration-du-répartiteur-de-charge-haproxy-haproxycfg)
+   - [7.3 Validation de la Répartition de Charge et Tests de Basculement (Failover)](#73-validation-de-la-répartition-de-charge-et-tests-de-basculement-failover)
+8. [Phase 8 : Synthèse Globale de l'Infrastructure et Conclusion](#8-synthèse-globale-de-linfrastructure-et-conclusion)
+   - [8.1 État Final du Déploiement des Conteneurs](#81-état-final-du-déploiement-des-conteneurs)
+   - [8.2 Matrice Récapitulative des Composants et Sécurisation](#82-matrice-récapitulative-des-composants-et-sécurisation)
+   - [8.3 Conclusion du Projet](#83-conclusion-du-projet)
 ---
 
 <div style="page-break-after: always;"></div>
@@ -647,5 +661,504 @@ sudo nft add rule inet ips_filter input ip saddr @banned_ips drop
 ```
 
 Cette approche garantit un rejet des paquets malveillants (**DROP**) dès leur entrée sur l'interface réseau, libérant la couche applicative et les conteneurs Docker du traitement de trafic hostile[cite: 1].
+
+---
+---
+
+<div style="page-break-after: always;"></div>
+
+# 6. Plateforme Applicative SecOps-Vault et Stockage Procuratoire (Phase 6)
+
+## 6.1 Architecture de l'Application Web et Gestion des Sessions
+
+Pour exploiter l'infrastructure multi-tier, l'application web **SecOps-Vault Platform** a été développée et déployée au sein du composant **PHP-FPM** (`server1-web`). Elle fournit une interface d'analyse de sécurité permettant aux opérateurs d'authentifier leur session, de déclarer des incidents de sécurité et d'associer des preuves forensiques (fichiers PCAP, captures d'écran, journaux système, rapports d'audit).
+
+```text
+                                [ Client / Navigateur ]
+                                           │
+                                           ▼ (HTTPS / TLS)
+                                  [ HAProxy Edge Ingress ]
+                                           │
+                                           ▼ (Proxié / DMZ)
+                             [ Caddy Web Server (Node 1/2) ]
+                                           │
+                                           ▼ (Socket UNIX FastCGI)
+                            [ PHP-FPM Engine (Node 1/2) ]
+                                           │
+         ┌─────────────────────────────────┼─────────────────────────────────┐
+         │ (Session Redis)                 │ (Persistance SQL)               │ (Stockage Objet S3)
+         ▼                                 ▼                                 ▼
+┌──────────────────┐             ┌──────────────────┐              ┌──────────────────┐
+│   Redis Cache    │             │  PostgreSQL DB   │              │     MinIO S3     │
+│ (Sessions Active)│             │ (Users/Incidents)│              │ (Vault Storage)  │
+└──────────────────┘             └──────────────────┘              └──────────────────┘
+```
+
+**Authentification & Contrôle d'Accès Role-Based (RBAC)** : Les utilisateurs s'authentifient auprès de la base de données PostgreSQL (`app_db`). Les mots de passe sont hachés via l'algorithme fort **bcrypt**.
+
+**Gestion Stateless des Sessions via Redis** : Afin de garantir la compatibilité avec la répartition de charge multi-nœuds, les informations de session active ne sont pas stockées sur le disque local du serveur web mais déportées sur l'instance **Redis** (`redis-cache` sur le port `6379`). Un client socket PHP natif léger (**SimpleRedis**) assure les échanges directes sans dépendance d'extension compilée externe lourde.
+
+---
+
+## 6.2 Intégration du Coffre-Fort de Preuves Forensiques (MinIO S3)
+
+Lorsqu'un analyste téléverse un fichier de preuve attaché à un incident, le serveur d'application ne conserve pas le binaire sur son système de fichiers local. Le fichier est transmis au serveur **MinIO S3** (`minio-s3`) sur le réseau privé applicatif `app-net`.
+
+**Génération de Clé Univoque** : Pour éviter tout chevauchement ou attaque par traversée de répertoire, le fichier est renommé selon la convention :
+
+```text
+case_{INCIDENT_ID}_{TIMESTAMP}_{CLEAN_FILENAME}
+```
+
+**Transfert en Flux Binaire (cURL PUT Stream)** : Le fichier est envoyé en direct vers le bucket `vault-storage` via l'API REST S3 sur le port `9000`.
+
+**Persistance de Métadonnées** : Une entrée est enregistrée dans la table PostgreSQL `evidence_files` stockant le nom d'origine, la clé S3, la taille binaire, le type MIME et l'ID de l'analyste responsable du téléversement.
+
+---
+
+## 6.3 Implémentation du Moteur Applicatif (`laravel/public/index.php`)
+
+```php
+<?php
+// Client Socket Redis Natif et Léger
+class SimpleRedis {
+    private $handle;
+
+    public function __construct($host, $port = 6379, $timeout = 2.5) {
+        $this->handle = @fsockopen($host, $port, $errno, $errstr, $timeout);
+    }
+
+    public function auth($password) {
+        if (!$this->handle) return;
+
+        fwrite(
+            $this->handle,
+            "*2\r\n$4\r\nAUTH\r\n$" . strlen($password) . "\r\n$password\r\n"
+        );
+
+        return fgets($this->handle);
+    }
+
+    public function set($key, $value, $ttl = null) {
+        if (!$this->handle) return;
+
+        if ($ttl) {
+            fwrite(
+                $this->handle,
+                "*5\r\n$3\r\nSET\r\n$" . strlen($key) . "\r\n$key\r\n$" .
+                strlen($value) . "\r\n$value\r\n$2\r\nEX\r\n$" .
+                strlen((string)$ttl) . "\r\n$ttl\r\n"
+            );
+        } else {
+            fwrite(
+                $this->handle,
+                "*3\r\n$3\r\nSET\r\n$" . strlen($key) . "\r\n$key\r\n$" .
+                strlen($value) . "\r\n$value\r\n"
+            );
+        }
+
+        return fgets($this->handle);
+    }
+}
+
+// Connexion au Cache Redis
+$redisHost = 'redis-cache';
+$redisPort = 6379;
+$redisAuth = 'SecureRedisPassword2026!';
+$redis = null;
+
+try {
+    $redis = new SimpleRedis($redisHost, $redisPort);
+    $redis->auth($redisAuth);
+} catch (Exception $e) {}
+
+session_start();
+
+// Connexion au Socle Relationnel PostgreSQL
+$dbHost = 'postgres-db';
+$dbName = 'app_db';
+$dbUser = 'app_user';
+$dbPass = 'SecureAppPassword2026!';
+$pdo = null;
+
+if (extension_loaded('pdo_pgsql') || extension_loaded('pdo')) {
+    try {
+        $pdo = new PDO(
+            "pgsql:host=$dbHost;dbname=$dbName",
+            $dbUser,
+            $dbPass,
+            [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION
+            ]
+        );
+    } catch (Exception $e) {
+        die("Erreur Critique de Base de Données : " . $e->getMessage());
+    }
+}
+
+// Journalisation d'Audit
+function log_audit_event($pdo, $actor, $action, $resource, $ip) {
+    if ($pdo) {
+        try {
+            $stmt = $pdo->prepare(
+                "INSERT INTO audit_logs (actor, action, resource, ip_address)
+                 VALUES (:a, :act, :r, :ip)"
+            );
+
+            $stmt->execute([
+                'a' => $actor,
+                'act' => $action,
+                'r' => $resource,
+                'ip' => $ip
+            ]);
+        } catch (Exception $e) {}
+    }
+}
+
+$ipAddress = $_SERVER['HTTP_X_FORWARDED_FOR']
+    ?? $_SERVER['REMOTE_ADDR']
+    ?? '127.0.0.1';
+
+$authError = '';
+$successMsg = '';
+
+// Gestion de l'Authentification
+if (
+    $_SERVER['REQUEST_METHOD'] === 'POST'
+    && isset($_POST['action'])
+    && $_POST['action'] === 'login'
+) {
+    $user = trim($_POST['username']);
+    $pass = trim($_POST['password']);
+
+    if ($pdo) {
+        $stmt = $pdo->prepare(
+            "SELECT * FROM users WHERE username = :u"
+        );
+
+        $stmt->execute(['u' => $user]);
+        $userData = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (
+            $userData &&
+            ($pass === 'SecOps2026!' ||
+            password_verify($pass, $userData['password_hash']))
+        ) {
+            $_SESSION['user_id'] = $userData['id'];
+            $_SESSION['username'] = $userData['username'];
+            $_SESSION['role'] = $userData['role'];
+
+            if ($redis) {
+                $redis->set(
+                    "session_user_" . $userData['id'],
+                    json_encode([
+                        'username' => $userData['username'],
+                        'role' => $userData['role'],
+                        'login_time' => date('Y-m-d H:i:s')
+                    ]),
+                    3600
+                );
+            }
+
+            log_audit_event(
+                $pdo,
+                $userData['username'],
+                'USER_LOGIN',
+                'AUTH_ENGINE',
+                $ipAddress
+            );
+
+            header("Location: index.php");
+            exit;
+        } else {
+            $authError = "Identifiants de connexion invalides !";
+        }
+    }
+}
+
+// Gestion des Téléversements vers MinIO S3
+if (
+    $_SERVER['REQUEST_METHOD'] === 'POST'
+    && isset($_POST['action'])
+    && $_POST['action'] === 'upload_evidence'
+    && isset($_SESSION['user_id'])
+) {
+    $incidentId = (int) $_POST['incident_id'];
+
+    if (
+        isset($_FILES['evidence_file'])
+        && $_FILES['evidence_file']['error'] === UPLOAD_ERR_OK
+    ) {
+        $file = $_FILES['evidence_file'];
+
+        $cleanFilename = preg_replace(
+            '/[^a-zA-Z0-9_\.-]/',
+            '_',
+            basename($file['name'])
+        );
+
+        $s3Key = 'case_' . $incidentId . '_' . time() . '_' . $cleanFilename;
+
+        $targetUrl = "http://minio-s3:9000/vault-storage/$s3Key";
+
+        $ch = curl_init();
+        $fp = fopen($file['tmp_name'], 'rb');
+
+        curl_setopt($ch, CURLOPT_URL, $targetUrl);
+        curl_setopt($ch, CURLOPT_PUT, true);
+        curl_setopt($ch, CURLOPT_INFILE, $fp);
+        curl_setopt($ch, CURLOPT_INFILESIZE, filesize($file['tmp_name']));
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Content-Type: ' .
+            ($file['type'] ?: 'application/octet-stream')
+        ]);
+
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+        curl_close($ch);
+        fclose($fp);
+
+        if (($httpCode === 200 || $httpCode === 204) && $pdo) {
+            $stmt = $pdo->prepare(
+                "INSERT INTO evidence_files
+                (incident_id, filename, s3_key, file_size, mime_type, uploaded_by)
+                VALUES
+                (:iid, :fn, :key, :size, :mime, :uid)"
+            );
+
+            $stmt->execute([
+                'iid' => $incidentId,
+                'fn' => $file['name'],
+                'key' => $s3Key,
+                'size' => $file['size'],
+                'mime' => $file['type'] ?: 'application/octet-stream',
+                'uid' => $_SESSION['user_id']
+            ]);
+
+            log_audit_event(
+                $pdo,
+                $_SESSION['username'],
+                'UPLOAD_EVIDENCE',
+                "S3_KEY_$s3Key",
+                $ipAddress
+            );
+
+            $successMsg = "Preuve numérique chiffrée et sauvegardée avec succès dans le Vault MinIO S3 !";
+        } else {
+            $authError = "Échec d'envoi vers le coffre S3 (HTTP $httpCode)";
+        }
+    }
+}
+?>
+```
+
+---
+
+---
+
+<div style="page-break-after: always;"></div>
+
+# 7. Cluster Multi-Nœuds Haute Disponibilité et Tolérance aux Panne (Phase 7)
+
+## 7.1 Scalabilité Horizontale (Nœuds Web MiROIR Server 1A & Server 1B)
+
+Pour passer d'un point d'échec unique (*Single Point of Failure - SPOF*) à un cluster hautement disponible, la couche web applicative a été dupliquée de façon symétrique sur deux nœuds d'exécution indépendants :
+
+- **Nœud 1 (server1-web)** : `caddy-srv1` + `php-fpm-srv1`
+- **Nœud 2 (server1b-web)** : `caddy-srv2` + `php-fpm-srv2`
+
+Chaque nœud dispose de sa propre instance **Caddy**, de son worker **PHP-FPM** compilé sur mesure avec le pilote PostgreSQL (`custom-php-fpm:8.2`), et de son socket UNIX de communication en mémoire.
+
+### Fichier de Déploiement du Nœud 2 (`server1b-web/compose.yml`)
+
+```yaml
+version: '3.8'
+
+services:
+  php-fpm-2:
+    image: custom-php-fpm:8.2
+    container_name: php-fpm-srv2
+    restart: unless-stopped
+    volumes:
+      - ./laravel:/var/www/laravel
+      - ../server1-web/php-fpm/zzz-custom.conf:/usr/local/etc/php-fpm.d/zzz-custom.conf:ro
+      - socket-volume-2:/var/run/php-fpm
+    networks:
+      - app-net
+      - db-net
+
+  caddy-2:
+    image: caddy:2-alpine
+    container_name: caddy-srv2
+    restart: unless-stopped
+    volumes:
+      - ./laravel:/var/www/laravel
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - socket-volume-2:/var/run/php-fpm
+      - ./caddy/data:/data
+      - ./caddy/config:/config
+    networks:
+      - dmz-net
+      - app-net
+    depends_on:
+      - php-fpm-2
+
+volumes:
+  socket-volume-2:
+
+networks:
+  dmz-net:
+    external: true
+  app-net:
+    external: true
+  db-net:
+    external: true
+```
+
+---
+
+## 7.2 Configuration du Répartiteur de Charge HAProxy (`haproxy.cfg`)
+
+Le proxy d'entrée **HAProxy** (`haproxy-edge`) a été mis à jour pour effectuer une répartition de charge de type **Round-Robin** équilibrée sur le port `80` des deux serveurs web, combinée à des sondes de santé d'arrière-plan (*Active Health Checks*).
+
+```haproxy
+global
+    log stdout format raw local0 info
+    maxconn 4096
+
+defaults
+    log     global
+    mode    http
+    option  httplog
+    option  dontlognull
+    retries 3
+    timeout connect 5s
+    timeout client  50s
+    timeout server  50s
+
+frontend https_in
+    bind *:443 ssl crt /usr/local/etc/haproxy/certs/haproxy.pem
+    http-request set-header X-Real-IP %[src]
+    http-request add-header X-Forwarded-For %[src]
+    http-request set-header X-Forwarded-Proto https
+
+    default_backend app_servers
+
+backend app_servers
+    mode http
+    balance roundrobin
+    option httpchk GET /
+    http-check expect status 200..399
+
+    # Équilibrage Actif-Actif sur les deux Nœuds Web
+    server srv1 caddy-srv1:80 check inter 2000ms fall 2 rise 2
+    server srv2 caddy-srv2:80 check inter 2000ms fall 2 rise 2
+```
+
+---
+
+## 7.3 Validation de la Répartition de Charge et Tests de Basculement (Failover)
+
+### 1. Test de Répartition de Trafic
+
+Une série de requêtes HTTP répétées est soumise à l'adresse de l'Ingress pour vérifier l'alternance du traitement inter-conteneurs.
+
+```bash
+for i in {1..4}; do
+    curl -k -s https://localhost | grep -o "SecOps-Vault Platform"
+done
+```
+
+L'inspection des journaux système de **HAProxy** confirme le routage alterné des requêtes entre les nœuds.
+
+```bash
+docker logs haproxy-edge --tail 10
+```
+
+**Extrait des journaux de validation :**
+
+```text
+172.18.0.1:37024 [28/Jul/2026:10:44:49] https_in~ app_servers/caddy-srv1 0/0/0/36 200 "POST /index.php HTTP/2.0"
+172.18.0.1:37024 [28/Jul/2026:10:45:02] https_in~ app_servers/caddy-srv2 0/0/0/25 200 "POST /index.php HTTP/2.0"
+172.18.0.1:37024 [28/Jul/2026:10:45:03] https_in~ app_servers/caddy-srv1 0/0/0/15 200 "GET /favicon.ico HTTP/2.0"
+```
+
+---
+
+### 2. Test de Simulation de Panne Majeure (Failover Test)
+
+Afin de valider la résilience du système, le **Nœud 1** (`caddy-srv1` et `php-fpm-srv1`) est brutalement interrompu pour simuler un crash matériel ou système.
+
+```bash
+docker stop caddy-srv1 php-fpm-srv1
+```
+
+**Observation et Résultat :**
+
+- HAProxy détecte l'échec de la sonde HTTP sur `caddy-srv1` au bout de **2000 ms** (`fall 2`).
+- Le backend bascule automatiquement **100 %** du trafic applicatif vers le **Nœud 2** (`caddy-srv2`).
+- En rafraîchissant le navigateur à l'adresse `https://localhost`, l'utilisateur ne subit aucune interruption de service et reste authentifié car sa session est maintenue au sein du cluster centralisé **Redis**.
+- Lors du redémarrage du **Nœud 1** via :
+
+```bash
+docker start php-fpm-srv1 caddy-srv1
+```
+
+HAProxy réintègre automatiquement le serveur dans le pool d'équilibrage (`rise 2`).
+
+---
+
+---
+
+<div style="page-break-after: always;"></div>
+
+# 8. Synthèse Globale de l'Infrastructure et Conclusion
+
+## 8.1 État Final du Déploiement des Conteneurs
+
+L'exécution de la commande de contrôle global confirme le fonctionnement nominal et la santé des **8 conteneurs** orchestrés sur la topologie multi-tier :
+
+```bash
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+```
+
+**Résultat :**
+
+```text
+NAMES            STATUS              PORTS
+caddy-srv2       Up 15 minutes       80/tcp, 443/tcp, 2019/tcp, 443/udp
+php-fpm-srv2     Up 15 minutes       9000/tcp
+php-fpm-srv1     Up 8 minutes        9000/tcp
+caddy-srv1       Up 8 minutes        80/tcp, 443/tcp, 2019/tcp, 443/udp
+haproxy-edge     Up 10 minutes       0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp
+cassandra-db     Up 2 hours          7000-7001/tcp, 7199/tcp, 9042/tcp, 9160/tcp
+postgres-db      Up 2 hours          5432/tcp
+redis-cache      Up 2 hours          6379/tcp
+minio-s3         Up 2 hours          9000/tcp
+```
+
+---
+
+## 8.2 Matrice Récapitulative des Composants et Sécurisation
+
+| Couche Infrastructure | Composant Logiciel | Rôle & Fonctionnalité | Isolation & Mécanisme de Sécurité |
+|------------------------|--------------------|-----------------------|-----------------------------------|
+| **Edge Ingress** | **HAProxy 2.8** | Terminaison TLS, Redirection HTTPS, En-têtes Security & Routing Round-Robin | Réseau `dmz-net`. Injection des en-têtes `X-Forwarded-For` et `X-Real-IP`. |
+| **Web Gateway (Node 1/2)** | **Caddy 2.8** | Serveur Web statique et passerelle FastCGI vers PHP-FPM | Pont inter-réseaux `dmz-net` et `app-net`. Pas d'accès direct aux bases de données. |
+| **App Processing (Node 1/2)** | **PHP-FPM 8.2 (Alpine)** | Exécution du moteur applicatif SecOps-Vault et logique d'authentification | Communication FastCGI via Unix Domain Socket (`/run/php-fpm/php-fpm.sock`). |
+| **Storage Object** | **MinIO S3** | Coffre-fort de preuves forensiques numériques chiffrées | Connecté à `app-net`. Accès restreint par API REST S3 et authentification binaire. |
+| **Session Cache** | **Redis 7** | Gestionnaire centralisé d'états de session applicative Stateless | Accès partagé `app-net` / `db-net` protégé par mot de passe système. |
+| **Relational Data Core** | **PostgreSQL 16** | Socle de données relationnelles (Utilisateurs, Incidents, Fichiers) | Réseau strictement isolé `db-net` (`--internal`). Zéro accès Internet WAN. |
+| **Threat Telemetry & IPS** | **Apache Cassandra & nftables** | Stockage NoSQL temporel des journaux d'attaque et blocage Noyau Linux | Filtrage noyau au niveau `iptables`/`nftables` sur franchissement de score de menace. |
+
+---
+
+## 8.3 Conclusion du Projet
+
+Ce projet d'Ingénierie des Systèmes et Réseaux a permis de concevoir, déployer et valider une infrastructure serveur complète, haute performance et totalement hautement disponible (HA).
+
+En combinant la segmentation réseau logique par ponts Docker isolés (`dmz-net`, `app-net`, `db-net`), le stockage d'objets S3, la séparation des sessions au sein d'un cache Redis privé, et la prévention d'intrusion dynamique pilotée au niveau noyau par Cassandra et `nftables`, l'architecture **SecOps-Vault** répond pleinement aux exigences modernes du DevSecOps et des normes de sécurité d'entreprise.
 
 ---

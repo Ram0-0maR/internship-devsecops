@@ -1,0 +1,4 @@
+caddy/data
+caddy/config
+../security-ips/logs
+.git

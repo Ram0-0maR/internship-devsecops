@@ -6,7 +6,7 @@ import subprocess
 from cassandra.cluster import Cluster
 
 # Connect to Cassandra
-cluster = Cluster(['127.0.0.1'], port=9042)
+cluster = Cluster(['172.19.0.5'], port=9042)
 session = cluster.connect('ips_security')
 
 # Threat Signatures (Regex)

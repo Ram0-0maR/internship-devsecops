@@ -29,3 +29,8 @@ server1-web/caddy/config/*
 # Prevent keeping env files
 .env
 *.env
+
+# Caddy & Application Runtime Data
+**/caddy/data/
+**/caddy/config/
+**/logs/

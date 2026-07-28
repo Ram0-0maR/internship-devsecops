@@ -1,35 +1,34 @@
 services:
-  php-fpm:
+  php-fpm-2:
     image: custom-php-fpm:8.2
-    container_name: php-fpm-srv1
+    container_name: php-fpm-srv2
     restart: unless-stopped
     volumes:
       - ./laravel:/var/www/laravel
-      - ./php-fpm/zzz-custom.conf:/usr/local/etc/php-fpm.d/zzz-custom.conf:ro
-      - socket-volume:/var/run/php-fpm
+      - ../server1-web/php-fpm/zzz-custom.conf:/usr/local/etc/php-fpm.d/zzz-custom.conf:ro
+      - socket-volume-2:/var/run/php-fpm
     networks:
       - app-net
       - db-net
 
-  caddy:
+  caddy-2:
     image: caddy:2-alpine
-    container_name: caddy-srv1
+    container_name: caddy-srv2
     restart: unless-stopped
     volumes:
       - ./laravel:/var/www/laravel
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - socket-volume:/var/run/php-fpm
+      - socket-volume-2:/var/run/php-fpm
       - ./caddy/data:/data
       - ./caddy/config:/config
-      - ../security-ips/logs:/var/log/caddy
     networks:
       - dmz-net
       - app-net
     depends_on:
-      - php-fpm
+      - php-fpm-2
 
 volumes:
-  socket-volume:
+  socket-volume-2:
 
 networks:
   dmz-net:
