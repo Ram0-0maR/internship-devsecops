@@ -1162,3 +1162,205 @@ Ce projet d'Ingénierie des Systèmes et Réseaux a permis de concevoir, déploy
 En combinant la segmentation réseau logique par ponts Docker isolés (`dmz-net`, `app-net`, `db-net`), le stockage d'objets S3, la séparation des sessions au sein d'un cache Redis privé, et la prévention d'intrusion dynamique pilotée au niveau noyau par Cassandra et `nftables`, l'architecture **SecOps-Vault** répond pleinement aux exigences modernes du DevSecOps et des normes de sécurité d'entreprise.
 
 ---
+
+<div style="page-break-after: always;"></div>
+
+# 9. Phase 9 : Observabilité Centralisée et Collecte de Métriques (Prometheus & Grafana)
+
+## 9.1 Architecture d'Observabilité et Exporteurs Télécoms
+
+Afin de garantir un suivi précis des indicateurs clés de performance de type **SRE Golden Signals** (Latence, Trafic, Erreurs, Saturation) sans compromettre la sécurité des segments isolés (`app-net` et `db-net`), une infrastructure de métriques basée sur le modèle d'extraction *Pull-based* a été déployée au sein du sous-répertoire dédié `monitoring-tier/`.
+
+L'ensemble des services conteneurisés expose des points de terminaison de télémesure moissonnés à intervalle régulier (15s) par l'instance centrale **Prometheus** (v2.51.0). Les sous-ensembles sont cartographiés comme suit :
+
+- **Ingress Edge Layer (`haproxy-edge`)** : Point de terminaison natif d'exportation de métriques activé sur le port d'administration `8405` (`http-request use-service prometheus-exporter`).
+- **Serveurs Web (`caddy-srv1` & `caddy-srv2`)** : Activation du composant natif Caddy Admin API exposant l'interface `/metrics` sur le port `2019`.
+- **Interprètes d'Application (`php-fpm-srv1` & `php-fpm-srv2`)** : Analyseurs autonomes `hipages/php-fpm_exporter` (v2.2.0) dialoguant directement avec les sockets UNIX partagés (`unix:///var/run/php-fpm/php-fpm.sock;/status`) sous permissions POSIX assouplies (`listen.mode = 0666`).
+- **Bases de Données Relationnelles & Cache (`postgres-db` & `redis-cache`)** : Conteneurs d'exportation dédiés `postgres-exporter` (port `9187`) et `redis_exporter` (port `9121`) connectés au réseau d'arrière-plan `db-net`.
+- **Stockage d'Objets (`minio-s3`)** : Métriques de cluster S3 exposées de manière anonyme sur le point de terminaison `/minio/v2/metrics/cluster` via la variable d'environnement `MINIO_PROMETHEUS_AUTH_TYPE=public`.
+- **Moteur Système Hôte (`node-exporter`)** : Extraction de la charge CPU, de la saturation RAM, des E/S disques et de l'état des sous-systèmes du noyau CachyOS sur le port `9100`.
+
+```text
+                                [ Grafana (:3000) ]
+                                         │
+                                         ▼ (Requêtes PromQL)
+                             [ Prometheus (:9090) ]
+                                         │
+        ┌────────────────────────────────┼────────────────────────────────┐
+        │ (Scrape /metrics)              │ (Scrape /metrics)              │ (Scrape /metrics)
+        ▼                                ▼                                ▼
+┌──────────────────┐            ┌──────────────────┐             ┌──────────────────┐
+│ Ingress Layer    │            │ Web / App Tier   │             │ Data & Sec Tier  │
+│ HAProxy (:8405)  │            │ Caddy (:2019)    │             │ Postgres (:9187) │
+│ Node Exporter    │            │ PHP-FPM (:9253)  │             │ Redis (:9121)    │
+│    (:9100)       │            │                  │             │ MinIO (:9000)    │
+└──────────────────┘            └──────────────────┘             └──────────────────┘
+```
+
+---
+
+## 9.2 Déploiement Déclaratif du Stack d'Observabilité (`monitoring-tier/compose.yml`)
+
+L'isolation des variables sensibles (identifiants administratifs Grafana et mots de passe système des bases de données) est appliquée via un fichier `.env` restreint (`chmod 600`) et ignoré du système de contrôle de version Git.
+
+```yaml
+networks:
+  dmz-net:
+    external: true
+  app-net:
+    external: true
+  db-net:
+    external: true
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  server1-web_socket-volume:
+    external: true
+  server1b-web_socket-volume-2:
+    external: true
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    ports:
+      - "9090:9090"
+    networks:
+      - dmz-net
+      - app-net
+      - db-net
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - app-net
+      - dmz-net
+
+  node-exporter:
+    image: prom/node-exporter:v1.7.0
+    container_name: node-exporter
+    restart: unless-stopped
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    networks:
+      - app-net
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: postgres-exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_APP_USER}:${POSTGRES_APP_PASSWORD}@postgres-db:5432/app_db?sslmode=disable"
+    networks:
+      - db-net
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.58.0
+    container_name: redis-exporter
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: "redis://redis-cache:6379"
+      REDIS_PASSWORD: "${REDIS_PASSWORD}"
+    networks:
+      - db-net
+      - app-net
+
+  php-fpm-exporter-1:
+    image: hipages/php-fpm_exporter:2.2.0
+    container_name: php-fpm-exporter-1
+    restart: unless-stopped
+    environment:
+      PHP_FPM_SCRAPE_URI: "unix:///var/run/php-fpm/php-fpm.sock;/status"
+    volumes:
+      - server1-web_socket-volume:/var/run/php-fpm:ro
+    networks:
+      - app-net
+
+  php-fpm-exporter-2:
+    image: hipages/php-fpm_exporter:2.2.0
+    container_name: php-fpm-exporter-2
+    restart: unless-stopped
+    environment:
+      PHP_FPM_SCRAPE_URI: "unix:///var/run/php-fpm/php-fpm.sock;/status"
+    volumes:
+      - server1b-web_socket-volume-2:/var/run/php-fpm:ro
+    networks:
+      - app-net
+```
+
+---
+
+## 9.3 Procédure de Validation et État de Santé des Cibles (Targets)
+
+La validation fonctionnelle de la collecte de télémesure a été effectuée via l'API REST native de Prometheus sur l'hôte CachyOS.
+
+### Commande de contrôle exécutée sur le nœud hôte
+
+```bash
+curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, health: .health, lastError: .lastError}'
+```
+
+### Extrait des résultats de qualification
+
+```json
+{
+  "job": "caddy-web",
+  "health": "up",
+  "lastError": ""
+}
+{
+  "job": "haproxy-ingress",
+  "health": "up",
+  "lastError": ""
+}
+{
+  "job": "minio",
+  "health": "up",
+  "lastError": ""
+}
+{
+  "job": "node-exporter",
+  "health": "up",
+  "lastError": ""
+}
+{
+  "job": "php-fpm",
+  "health": "up",
+  "lastError": ""
+}
+{
+  "job": "postgres",
+  "health": "up",
+  "lastError": ""
+}
+{
+  "job": "redis",
+  "health": "up",
+  "lastError": ""
+}
+```
+
+La totalité des **10 cibles actives** réparties sur les trois ponts réseau isolés affiche un état de santé conforme (`health: up`) et une absence complète d'erreurs d'extraction. L'instance **Grafana** (accessible sur `http://localhost:3000`) est désormais provisionnée automatiquement avec la source de données **Prometheus** par défaut.
+
+---

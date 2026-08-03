@@ -1,3 +1,7 @@
+{
+    admin :2019
+}
+
 :80 {
     root * /var/www/laravel/public
     file_server

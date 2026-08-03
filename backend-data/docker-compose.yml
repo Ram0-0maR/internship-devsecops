@@ -46,3 +46,5 @@ services:
       - minio_data:/data
     networks:
       - app-net
+    environment:
+      - MINIO_PROMETHEUS_AUTH_TYPE=public

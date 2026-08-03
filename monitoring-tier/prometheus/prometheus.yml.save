@@ -1,0 +1,46 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # 1. Prometheus Self-Monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # 2. Host Node Exporter (System Metrics & nftables context)
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  # 3. Edge Ingress Tier (HAProxy Native Exporter)
+  - job_name: 'haproxy-ingress'
+    static_configs:
+      - targets: ['haproxy-edge:8405']
+
+  # 4. Web Tier (Caddy Native Admin Metrics)
+  - job_name: 'caddy-web'
+    static_configs:
+      - targets: ['caddy-srv1:2019', 'caddy-srv2:2019']
+
+  # 5. App Processing Tier (PHP-FPM Exporters)
+  - job_name: 'php-fpm'
+    static_configs:
+      - targets: ['php-fpm-exporter-1:9253', 'php-fpm-exporter-2:9253']
+
+  # 6. Database Tier (PostgreSQL Exporter)
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  # 7. Cache Tier (Redis Exporter)
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+  # 8. Storage Tier (MinIO Native Cluster Metrics)
+  - job_name: 'minio'
+    metrics_path: '/minio/v2/metrics/cluster'
+    static_configs:
+      - targets: ['minio-s3:9000']
+`
