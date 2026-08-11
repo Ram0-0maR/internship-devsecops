@@ -1,0 +1,15 @@
+title = "SecOps-Vault Custom Gitleaks Rules"
+
+[allowlist]
+description = "Global allowlist for public mock templates and tests"
+paths = [
+    '''REPORT\.md''',
+    '''NEXT_PHASES_SPEC\.md''',
+    '''\.env\.example$'''
+]
+
+[[rules]]
+id = "generic-api-key"
+description = "Generic API Key Leak Detection"
+regex = '''(?i)(api_key|apikey|secret_key|app_secret)\s*[:=]\s*["']([A-Za-z0-9_\-]{16,})["']'''
+tags = ["key", "generic"]

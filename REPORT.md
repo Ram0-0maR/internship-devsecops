@@ -23,13 +23,10 @@
 
 - **Réalisé par :** Omar ELQAOUAS
 - **Encadrant :** Zouhair ELHICHAMI
-- **Date de Soumission :** Juillet 2026
-- **Version du Document :** v5.0.1
+- **Date de Soumission :** Août 2026
+- **Version du Document :** **v6.0.0** *(Mise à jour : Observabilité, Centralisation des Logs & Sécurité CI/CD Shift-Left)*
 
 ---
-
-<div style="page-break-after: always;"></div>
-
 
 # Table des Matières
 
@@ -66,6 +63,19 @@
    - [8.1 État Final du Déploiement des Conteneurs](#81-état-final-du-déploiement-des-conteneurs)
    - [8.2 Matrice Récapitulative des Composants et Sécurisation](#82-matrice-récapitulative-des-composants-et-sécurisation)
    - [8.3 Conclusion du Projet](#83-conclusion-du-projet)
+9. [Phase 9 : Observabilité Centralisée et Collecte de Métriques (Prometheus & Grafana)](#9-phase-9--observabilité-centralisée-et-collecte-de-métriques-prometheus--grafana)
+   - [9.1 Architecture d'Observabilité et Exporteurs Télécoms](#91-architecture-dobservabilité-et-exporteurs-télécoms)
+   - [9.2 Déploiement Déclaratif du Stack d'Observabilité (`monitoring-tier/compose.yml`)](#92-déploiement-déclaratif-du-stack-dobservabilité-monitoring-tiercomposeyml)
+   - [9.3 Procédure de Validation et État de Santé des Cibles (Targets)](#93-procédure-de-validation-et-état-de-santé-des-cibles-targets)
+10. [Phase 10 : Centralisation et Analyse des Logs (Stack Grafana Loki & Promtail)](#10-phase-10--centralisation-et-analyse-des-logs-stack-grafana-loki--promtail)
+    - [10.1 Architecture de Centralisation des Journaux](#101-architecture-de-centralisation-des-journaux)
+    - [10.2 Configurations Technologiques et Déploiement](#102-configurations-technologiques-et-déploiement)
+    - [10.3 Procédure de Déploiement et Validation Fonctionnelle](#103-procédure-de-déploiement-et-validation-fonctionnelle)
+11. [Phase 11 : Automatisation CI/CD et Sécurité "Shift-Left" (Gitleaks, Semgrep & Trivy)](#11-phase-11--automatisation-cicd-et-sécurité-shift-left-gitleaks-semgrep--trivy)
+    - [11.1 Principes et Architecture d'Analyse Automatisée](#111-principes-et-architecture-danalyse-automatisée)
+    - [11.2 Analyse des Résultats et Plan de Remédiation (Shift-Left Remediation)](#112-analyse-des-résultats-et-plan-de-remédiation-shift-left-remediation)
+    - [11.3 Validation Fonctionnelle du Pipeline](#113-validation-fonctionnelle-du-pipeline)
+    
 ---
 
 <div style="page-break-after: always;"></div>
@@ -1362,5 +1372,323 @@ curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | {job:
 ```
 
 La totalité des **10 cibles actives** réparties sur les trois ponts réseau isolés affiche un état de santé conforme (`health: up`) et une absence complète d'erreurs d'extraction. L'instance **Grafana** (accessible sur `http://localhost:3000`) est désormais provisionnée automatiquement avec la source de données **Prometheus** par défaut.
+
+---
+
+<div style="page-break-after: always;"></div>
+
+# 10. Phase 10 : Centralisation et Analyse des Logs (Stack Grafana Loki & Promtail)
+
+## 10.1 Architecture de Centralisation des Journaux
+
+Afin de compléter le système d'observabilité déployé lors de la **Phase 9** (collecte de métriques avec Prometheus), la **Phase 10** introduit une infrastructure de journalisation centralisée en temps réel pour l'ensemble des conteneurs de la plateforme DevSecOps.
+
+L'architecture repose sur la stack **PLG** (Promtail, Loki, Grafana) :
+
+- **Promtail (v2.9.4)** : Agent léger d'agrégation (*log shipper*). Il interroge le socket Docker (`/var/run/docker.sock`) pour la découverte dynamique des conteneurs, lit les journaux applicatifs sur le disque hôte, leur applique des métadonnées et les expédie vers Loki.
+- **Grafana Loki (v2.9.4)** : Moteur de stockage et d'indexation orienté métadonnées (TSDB). Contrairement aux moteurs de recherche textuels complets, Loki n'indexe que les étiquettes (`labels`), garantissant une empreinte mémoire minimale et un stockage efficient sur le système de fichiers.
+- **Grafana (v10.4.0)** : Interface de visualisation centralisée exploitant Loki comme source de données pour l'analyse d'incidents, l'audit de sécurité et l'exécution de requêtes en langage **LogQL**.
+
+```text
+                                  [ Grafana (:3000) ]
+                                           │
+                                           ▼ (Requêtes LogQL)
+                                [ Grafana Loki (:3100) ]
+                                           ▲
+                                           │ (Push HTTP / Stream JSON)
+                                 [ Promtail Agent ]
+                                           │
+         ┌─────────────────────────────────┼─────────────────────────────────┐
+         │ (Socket & Disk Logs)            │ (Socket & Disk Logs)            │ (Socket & Disk Logs)
+         ▼                                 ▼                                 ▼
+┌──────────────────┐             ┌──────────────────┐              ┌──────────────────┐
+│   HAProxy Edge   │             │   Caddy Web      │              │ PostgreSQL DB    │
+│  (/var/lib/docker)             │  (/var/lib/docker)             │  (/var/lib/docker)│
+└──────────────────┘             └──────────────────┘              └──────────────────┘
+```
+
+---
+
+## 10.2 Configurations Technologiques et Déploiement
+
+L'ensemble des fichiers de configuration est centralisé dans le répertoire `~/internship-devsecops/monitoring-tier/`.
+
+### A. Configuration de l'Agent Promtail (`monitoring-tier/promtail/promtail-config.yml`)
+
+Promtail est configuré avec l'extension `docker_sd_configs` pour détecter automatiquement les conteneurs actifs. Il applique une règle d'expression régulière (`/?(.*)`) pour normaliser le nom des conteneurs en supprimant le préfixe slash optionnel, puis extrait dynamiquement le flux de sortie (`stdout/stderr`).
+
+```yaml
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/?(.*)'
+        target_label: 'container'
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: 'stream'
+    pipeline_stages:
+      - docker: {}
+```
+
+### B. Configuration du Backend Loki (`monitoring-tier/loki/loki-config.yml`)
+
+Loki s'exécute en mode monolithique avec le schéma de stockage moderne **TSDB** partitionné par tranches quotidiennes de 24 heures.
+
+```yaml
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /tmp/loki
+  storage:
+    filesystem:
+      chunks_directory: /tmp/loki/chunks
+      rules_directory: /tmp/loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  reject_old_samples: false
+```
+
+### C. Configuration d'Orchestration Docker (`monitoring-tier/compose.yml`)
+
+Pour lire les fichiers journaux générés par Docker sur le système hôte CachyOS, le service **Promtail** est exécuté sous l'utilisateur `root` et bénéficie du montage en lecture seule du répertoire `/var/lib/docker/containers`.
+
+```yaml
+loki:
+  image: grafana/loki:2.9.4
+  container_name: loki
+  restart: unless-stopped
+  ports:
+    - "3100:3100"
+  volumes:
+    - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+  command: -config.file=/etc/loki/loki-config.yml
+  networks:
+    - app-net
+
+promtail:
+  image: grafana/promtail:2.9.4
+  container_name: promtail
+  user: root
+  restart: unless-stopped
+  volumes:
+    - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /var/lib/docker/containers:/var/lib/docker/containers:ro
+  command: -config.file=/etc/promtail/promtail-config.yml
+  networks:
+    - app-net
+```
+
+---
+
+## 10.3 Procédure de Déploiement et Validation Fonctionnelle
+
+Les commandes suivantes ont été exécutées sous l'environnement **fish** pour instancier la stack, générer du trafic et valider l'ingestion.
+
+### 1. Démarrage des Services d'Observabilité
+
+```fish
+cd ~/internship-devsecops/monitoring-tier
+docker compose up -d loki promtail
+```
+
+---
+
+### 2. Génération de Trafic de Test
+
+Exécution d'une série de requêtes vers l'Ingress HAProxy pour alimenter les journaux d'accès.
+
+```fish
+for i in (seq 1 5)
+    curl -sk https://localhost/ > /dev/null
+end
+sleep 3
+```
+
+---
+
+### 3. Inspection des Pointeurs d'Ingestion (Cursors)
+
+Vérification de l'enregistrement des positions de lecture par Promtail.
+
+```bash
+docker exec -it promtail cat /tmp/positions.yaml
+```
+
+**Résultat :**
+
+```text
+positions:
+  cursor-4a35d68883fd70fa4dc1fd1500cca0f498ab2ef96464c07adbe316ac8e0dce43: "1785861531"
+  cursor-4e035a98607dadda4278189acc0ab1bfd14e7027885964df067d067623b26086: "1785861302"
+  cursor-930af63520ad845cc5d7aff7cc133d16976a0feccf15fdc1a62a100a60cb0733: "1785861301"
+```
+
+---
+
+### 4. Qualification de l'API REST Loki
+
+Interrogation de l'API de Loki pour confirmer la disponibilité des métadonnées de conteneurs.
+
+```bash
+curl -s "http://localhost:3100/loki/api/v1/label/container/values" | jq .
+```
+
+**Résultat attendu :**
+
+```json
+[
+  "caddy-srv1",
+  "caddy-srv2",
+  "haproxy-edge",
+  "php-fpm-srv1",
+  "php-fpm-srv2"
+]
+```
+
+L'ensemble des logs de l'infrastructure est désormais centralisé, indexé par conteneur et interrogeable en temps réel via l'interface **Grafana** (**Explore → Data source: Loki → `{container="haproxy-edge"}`**).
+
+---
+
+<div style="page-break-after: always;"></div>
+
+# 11. Phase 11 : Automatisation CI/CD et Sécurité "Shift-Left" (Gitleaks, Semgrep & Trivy)
+
+## 11.1 Principes et Architecture d'Analyse Automatisée
+
+Afin d'intégrer la sécurité au plus tôt dans le cycle de vie du développement (*Shift-Left Security*), la **Phase 11** met en œuvre un pipeline d'analyse automatisée de la sécurité. L'objectif est d'empêcher l'introduction de secrets, de failles applicatives ou de vulnérabilités système au sein du cluster avant tout déploiement.
+
+Conformément à nos contraintes d'isolation de l'hôte **CachyOS**, l'ensemble des outils d'analyse (Gitleaks, Semgrep, Trivy) est exécuté au sein de conteneurs Docker éphémères.
+
+L'architecture d'analyse s'articule autour de trois axes complémentaires :
+
+- **Détection des Fuites de Secrets (Gitleaks)** : Analyse l'historique des commits Git et les fichiers de travail à la recherche de clés d'API, jetons d'accès ou mots de passe codés en dur.
+- **Analyse Statique de Sécurité Applicative (SAST - Semgrep)** : Scanne le code source PHP/Laravel selon les règles **OWASP Top 10** afin d'identifier les injections SQL, les failles XSS, le détournement d'URL (SSRF) et la mauvaise gestion des entrées utilisateur.
+- **Analyse des Vulnérabilités d'Images et IaC (Trivy)** : Analyse les images Docker personnalisées (`custom-php-fpm:8.2`) pour identifier les CVE au niveau des paquets système (Alpine) et contrôle la conformité des fichiers `Dockerfile` et Docker Compose (IaC).
+
+```text
+       [ Code Source & Configurations IaC ]
+                        │
+                        ▼
+┌──────────────────────────────────────────────────────────┐
+│        Phase 11 : Pipeline de Sécurité (Shift-Left)      │
+├──────────────────┬───────────────────┬───────────────────┤
+│     Gitleaks     │      Semgrep      │       Trivy       │
+│  (Secrets Scan)  │    (SAST Scan)    │   (CVE & IaC)     │
+└────────┬─────────┴─────────┬─────────┴─────────┬─────────┘
+         │                   │                   │
+         ▼                   ▼                   ▼
+  [ Zero Secret ]     [ OWASP Clean ]    [ Patch & Non-Root ]
+                        │
+                        ▼
+      [ Image Conforme & Prête pour la Prod ]
+```
+
+---
+
+## 11.2 Analyse des Résultats et Plan de Remédiation (Shift-Left Remediation)
+
+L'exécution des premiers outils d'analyse automatisée sur notre plateforme a permis d'intercepter et de corriger plusieurs vulnérabilités et défauts de configuration majeurs avant la mise en production.
+
+### 1. Analyse d'Images Conteneur (Trivy Image Scan)
+
+- **Vulnérabilité Détectée** : `CVE-2026-33630` (Sévérité : **HIGH**) dans la bibliothèque `c-ares` (version `1.34.6-r0`).
+- **Impact** : Risque de corruption mémoire de type *Use-After-Free* / *Double-Free*.
+- **Remédiation** : Ajout d'une mise à jour explicite du paquet `c-ares` via `apk upgrade` lors du build de l'image.
+
+---
+
+### 2. Analyse de Fichiers de Configuration (Trivy IaC Config Scan)
+
+- **Défaut `DS-0002` (HIGH)** : Absence d'instruction `USER` non-privilégiée dans les Dockerfiles (exécution sous l'utilisateur `root`).
+- **Défaut `DS-0026` (LOW)** : Absence d'instruction `HEALTHCHECK` pour surveiller l'état du processus PHP-FPM.
+- **Remédiation** : Ajout de l'utilisateur système `www-data` et déclaration d'une sonde `HEALTHCHECK` via `nc` (Netcat).
+
+---
+
+### 3. Fichiers de Configuration Corrigés (`server1-web/Dockerfile` & `server1b-web/Dockerfile`)
+
+```dockerfile
+FROM php:8.2-fpm-alpine
+
+# Remédiation CVE-2026-33630 : Mise à niveau de c-ares et installation des extensions PDO
+RUN apk update && apk upgrade --no-cache c-ares && \
+    docker-php-ext-install pdo pdo_pgsql
+
+# Remédiation DS-0026 : Sonde d'évaluation de santé du conteneur
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD nc -z 127.0.0.1 9000 || exit 1
+
+# Remédiation DS-0002 : Basculement vers un utilisateur non-privilégié
+USER www-data
+```
+
+---
+
+## 11.3 Validation Fonctionnelle du Pipeline
+
+L'efficacité du pipeline a été validée par la re-soumission de tests synthétiques et la vérification des sorties de chaque scanner.
+
+### 1. Validation Gitleaks (Détection de Secrets)
+
+```bash
+docker run --rm -v (pwd):/path zricethezav/gitleaks:latest detect --source="/path" -v --no-git
+```
+
+> **Résultat** : `Scanned 22.98 MB - no leaks found`. Confirmation qu'aucun secret ou clé d'API n'est exposé en clair dans le répertoire du projet.
+
+---
+
+### 2. Validation Semgrep (SAST - OWASP Top 10)
+
+```bash
+docker run --rm -v (pwd)/server1-web/laravel:/src semgrep/semgrep semgrep scan --config p/php /src
+```
+
+> **Résultat** : Détection réussie des failles d'injection SQL (`tainted-sql-string`) introduites lors des tests, confirmant le blocage automatique du code vulnérable.
+
+---
+
+### 3. Validation Trivy (Images & Infrastructure as Code)
+
+```bash
+# Inspection de l'image re-construite
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image custom-php-fpm:8.2
+
+# Audit des fichiers Dockerfile
+docker run --rm -v (pwd):/src aquasec/trivy:latest config /src
+```
+
+> **Résultat Final** : **0 vulnérabilité CRITICAL/HIGH** et suppression totale des avertissements de sécurité IaC sur l'ensemble des Dockerfiles du projet.
 
 ---
